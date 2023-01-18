@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width,user-scalable=no">
+
+    <meta name="viewport" content="initial-scale=1, maximum-scale=1,user-scalable=no">
+    <title>Parcel QC</title>
+    <link rel="stylesheet" href="https://js.arcgis.com/3.21/dijit/themes/nihilo/nihilo.css">
+    <link rel="stylesheet" href="https://js.arcgis.com/3.21/esri/css/esri.css">
+    <style>
+      html, body, #mainWindow {
+        font-family: sans-serif;
+        height: 100%;
+        width: 100%;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+      }
+      #header {
+        height: 80px;
+        overflow: auto;
+        padding: 0.5em;
+      }
+      button {
+        padding: 10px;
+      }
+      #debugDiv {
+        position: absolute;
+        bottom: 5px;
+        left: 5px;
+      }
+      #theOutput {
+        position: absolute;
+        bottom: 25px;
+        left: 5px;
+      }
+      .esriScalebarLabel {
+         color:white;
+      }
+      .dijitReset {
+        padding: 20px;
+      }
+      #btnGoogle{
+        position: absolute;
+        top: 15px;
+        right: 15px;
+        z-index: 1;
+      }
+    </style>
+    <script src="https://js.arcgis.com/3.21/"></script>
+    <script>
+      var featureLayer;
+      var polygonLayer;
+      var graphic;
+      var query;
+      var queryTask;
+      var theGeometry;
+      var theRecordID=0;
+      var theRTE_NM="";
+      var queryAvailable;
+      var queryAvailableCount=0;
+      var map, toolbar, symbol, geomTask;
+      var google;
+
+      require([
+        "esri/map",
+        "esri/layers/WMTSLayer",
+        "esri/layers/WMTSLayerInfo",
+        "esri/layers/FeatureLayer",
+        "esri/geometry/Polygon",
+        "esri/toolbars/draw",
+        "esri/graphic",
+        "esri/tasks/query",
+        "esri/tasks/QueryTask",
+        "esri/dijit/Scalebar",
+        "esri/symbols/SimpleMarkerSymbol",
+        "esri/symbols/SimpleLineSymbol",
+        "esri/symbols/SimpleFillSymbol",
+        "esri/renderers/SimpleRenderer",
+        "dojo/parser",
+        "dijit/registry",
+        "esri/symbols/TextSymbol",
+        "esri/symbols/Font",
+        "esri/layers/LabelClass",
+        "esri/symbols/CartographicLineSymbol",
+        "dijit/layout/BorderContainer",
+        "dijit/layout/ContentPane",
+        "dijit/form/Button",
+        "dijit/WidgetSet",
+        "dojo/domReady!"
+      ], function(
+        Map,
+        WMTSLayer,
+        WMTSLayerInfo,
+        FeatureLayer,
+        Polygon,
+        Draw,
+        Graphic,
+        Query,
+        QueryTask,
+        Scalebar,
+        SimpleMarkerSymbol,
+        SimpleLineSymbol,
+        SimpleFillSymbol,
+        SimpleRenderer,
+        parser,
+        registry,
+        TextSymbol,
+        Font,
+        LabelClass,
+        CartographicLineSymbol
+      ) {
+        parser.parse();
+
+		    // Google Imagery WMTS layer info
+        var GoogleLayerInfo = new WMTSLayerInfo({
+          identifier: "texas",
+          tileMatrixSet: "0to20",
+          format: "png"
+        });
+
+        var GoogleLayerOptions = {
+          serviceMode: "KVP",
+          layerInfo: GoogleLayerInfo
+        };
+
+        map = new Map("map", {
+          // basemap: "hybrid",
+          // basemap: google,
+          center: [-97, 30],
+          zoom: 17,
+          minZoom:16,
+          maxZoom:20,
+          showLabels : true,
+          slider: false,
+          logo: false,
+          showAttribution: false
+        });
+
+        // Name server with CORS enabled for Google Imagery
+		  	esri.config.defaults.io.corsEnabledServers.push("https://txgi.tnris.org");
+		  	esri.config.defaults.io.corsDetection = false;
+
+	      // Add Google Imagery WMTS layer
+	      google = new esri.layers.WMTSLayer("https://txgi.tnris.org/login/path/pegasus-horizon-castro-comrade/wmts", GoogleLayerOptions);
+	      map.addLayer(google);
+
+
+        //Generic labeling for all layers
+        var labelSymbol = new esri.symbol.TextSymbol();
+        labelSymbol.font.setSize("12pt");
+        labelSymbol.font.setFamily("arial");
+        labelSymbol.setHaloSize(1);
+        labelSymbol.setColor(new esri.Color([255, 0, 0]));
+        labelSymbol.setHaloColor(new esri.Color([255, 255, 255]));
+
+        var waterlabelSymbol = new esri.symbol.TextSymbol();
+        waterlabelSymbol.font.setSize("12pt");
+        waterlabelSymbol.font.setFamily("arial");
+        waterlabelSymbol.setHaloSize(1);
+        waterlabelSymbol.setColor(new esri.Color([0, 0, 255]));
+        waterlabelSymbol.setHaloColor(new esri.Color([255, 255, 255]));
+
+        var parcellabelSymbol = new esri.symbol.TextSymbol();
+        parcellabelSymbol.font.setSize("8pt");
+        parcellabelSymbol.font.setFamily("arial");
+        parcellabelSymbol.setHaloSize(1);
+        parcellabelSymbol.setColor(new esri.Color([255, 165, 0]));
+        parcellabelSymbol.setHaloColor(new esri.Color([255, 255, 255]));
+
+
+
+        //Adding the layer ROW Polygon
+        ROWPGLayer = new FeatureLayer("https://services.arcgis.com/KTcxiTD9dsQw4r7Z/ArcGIS/rest/services/Parcel_QC/FeatureServer/58", {id:"ROW_pg",visible: true});
+        ROWPGLayer.setDefinitionExpression("STATUS='Available'");
+        map.addLayer(ROWPGLayer);
+        ROWPGLayer.show();
+
+        //Adding the state parcel Polygon
+        parcelLayer = new FeatureLayer("https://feature.tnris.org/arcgis/rest/services/Parcels/stratmap19_land_parcels_48/MapServer/0", {id:"Parcels",visible: true});
+
+        var parcelLBL = {
+          "labelExpressionInfo": {"value": "{owner_name}"},
+          "labelPlacement":"always-horizontal"
+        };
+        var parcellabelClass = new esri.layers.LabelClass(parcelLBL);
+        parcellabelClass.symbol = labelSymbol;
+        parcelLayer.setLabelingInfo([ parcellabelClass ]);
+
+        map.addLayer(parcelLayer);
+        parcelLayer.show();
+
+
+        //Adding the layer On System Roadbeds
+        featureLayer = new FeatureLayer("https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/TxDOT_Roadways/FeatureServer/0", {id:"OnSystem",visible: true});
+        featureLayer.setDefinitionExpression("RTE_PRFX NOT IN ('FC','CS','CR')");
+
+				var defaultSymbol = new esri.symbol.SimpleLineSymbol("solid", new esri.Color("#A52A2A"), 3);
+				var theRenderer = new esri.renderer.SimpleRenderer(defaultSymbol);
+				featureLayer.setRenderer(theRenderer);
+
+        var jsonLBL = {
+          "labelExpressionInfo": {"value": "{RTE_NM}"},
+          "labelPlacement":"always-horizontal"
+        };
+
+        //LabelClass for roadways
+        var labelClass = new esri.layers.LabelClass(jsonLBL);
+        labelClass.symbol = labelSymbol;
+        featureLayer.setLabelingInfo([ labelClass ]);
+
+        map.addLayer(featureLayer);
+        //End On System Roadbeds
+
+
+        //Adding the layer Bridges
+        bridgeLayer = new FeatureLayer("https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/TxDOT_Bridges/FeatureServer/0", {id:"Bridge",visible: true});
+        bridgeLayer.setDefinitionExpression("CULV_COND_RTNG = 'N'");
+
+        var bridgeLBL = {
+          "labelExpressionInfo": {"value": "{FEAT_INTSECT}"},
+          "labelPlacement":"always-horizontal"
+        };
+        var bridgelabelClass = new esri.layers.LabelClass(bridgeLBL);
+        bridgelabelClass.symbol = labelSymbol;
+        bridgeLayer.setLabelingInfo([ bridgelabelClass ]);
+
+        map.addLayer(bridgeLayer);
+        bridgeLayer.show();
+
+        //Adding the layer Rail
+        railLayer = new FeatureLayer("https://geo.dot.gov/mapping/rest/services/NTAD/North_American_Rail_Network_Lines/MapServer/0", {id:"Rail",visible: true});
+        var railLBL = {
+          "labelExpressionInfo": {"value": "{RROWNER1}"},
+          "labelPlacement":"always-horizontal"
+        };
+        var raillabelClass = new esri.layers.LabelClass(railLBL);
+        raillabelClass.symbol = labelSymbol;
+        railLayer.setLabelingInfo([ raillabelClass ]);
+
+        map.addLayer(railLayer);
+        railLayer.show();
+
+        //Adding the layer Stream
+        streamLayer = new FeatureLayer("https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/Texas_Streams/FeatureServer/1", {id:"Stream",visible: true});
+        var streamLBL = {
+          "labelExpressionInfo": {"value": "{STRM_NM}"},
+          "labelPlacement":"always-horizontal"
+        };
+        var streamlabelClass = new esri.layers.LabelClass(streamLBL);
+        streamlabelClass.symbol = waterlabelSymbol;
+        streamLayer.setLabelingInfo([ streamlabelClass ]);
+
+        map.addLayer(streamLayer);
+        streamLayer.show();
+
+        //Adding the layer Waterbody
+        waterbodyLayer = new FeatureLayer("https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/WaterBodies/FeatureServer/0", {id:"Waterbody",visible: true});
+        var streamLBL = {
+          "labelExpressionInfo": {"value": "{STRM_NM}"},
+          "labelPlacement":"always-horizontal"
+        };
+        var streamlabelClass = new esri.layers.LabelClass(streamLBL);
+        streamlabelClass.symbol = waterlabelSymbol;
+        streamLayer.setLabelingInfo([ streamlabelClass ]);
+
+        map.addLayer(streamLayer);
+        streamLayer.show();
+
+        //Adding the layer Restareas
+        restareaLayer = new FeatureLayer("https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/TxDOT_Safety_Rest_Areas/FeatureServer/0", {id:"Restarea",visible: true});
+
+        var restareaLBL = {
+          "labelExpressionInfo": {"value": "{FEAT_INTSECT}"},
+          "labelPlacement":"always-horizontal"
+        };
+        var restarealabelClass = new esri.layers.LabelClass(restareaLBL);
+        restarealabelClass.symbol = labelSymbol;
+        restareaLayer.setLabelingInfo([ restarealabelClass ]);
+
+        map.addLayer(restareaLayer);
+        restareaLayer.show();
+
+
+
+
+        //Query the layer
+        //queryTask = new QueryTask("https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/ROW_ReferencePoints/FeatureServer/0");
+        queryTask = new QueryTask("https://services.arcgis.com/KTcxiTD9dsQw4r7Z/ArcGIS/rest/services/Parcel_QC/FeatureServer/58");
+        query = new Query();
+        query.returnGeometry = false;
+        query.outFields = ["*"];
+
+        //Adding the layer Marker
+        XmarkerLayer = new FeatureLayer("https://services.arcgis.com/KTcxiTD9dsQw4r7Z/ArcGIS/rest/services/Parcel_QC/FeatureServer/58", {id:"XMarker",visible: false});
+        map.addLayer(XmarkerLayer);
+        XmarkerLayer.show();
+
+
+        //Count to get number of Available Map Reference IDs
+        queryAvailable = new Query();
+        //queryAvailable.where = "STATUS = 'Available' And OnLine = 'OnLine'";
+        queryAvailable.where = "STATUS = 'Available'";
+
+        map.on("load", createToolbar);
+        map.disablePan();
+        map.disableKeyboardNavigation();
+        map.disableMapNavigation();
+        map.on("mouse-move", showCoordinates);
+
+    		map.on("load", function() {
+      		findReference();
+      		document.getElementById("save").disabled = true;
+    		});
+
+        // loop through all dijits, connect onClick event
+        // listeners for buttons to activate drawing tools
+        registry.forEach(function(d) {
+          // d is a reference to a dijit
+          // could be a layout container or a button
+          if ( d.declaredClass === "dijit.form.Button" ) {
+            d.on("click", activateTool);
+          }
+        });
+
+        function activateTool() {
+          //var tool = this.label.toUpperCase().replace(/ /g, "_");
+          var tool = "POLYGON";
+          toolbar.activate(Draw[tool]);
+        }
+
+        // function deActivateTool() {
+        //   //var tool = this.label.toUpperCase().replace(/ /g, "_");
+        //   var tool = "POLYGON";
+        //   toolbar.activate(Draw[tool]);
+        // }
+
+        function createToolbar(themap) {
+          toolbar = new Draw(map);
+          toolbar.on("draw-end", addToMap);
+        }
+
+        function addToMap(evt) {
+          document.getElementById("save").disabled = false;
+          var symbol;
+          toolbar.deactivate();
+          switch (evt.geometry.type) {
+            case "point":
+            case "multipoint":
+              symbol = new SimpleMarkerSymbol();
+              break;
+            case "polyline":
+              symbol = new SimpleLineSymbol();
+              break;
+            default:
+              symbol = new SimpleFillSymbol();
+              break;
+          }
+          graphic = new Graphic(evt.geometry, symbol);
+          theGeometry = new Polygon(evt.geometry);
+          map.graphics.add(graphic);
+        }
+      });
+
+    function togglePolygons() {
+      if (document.getElementById("chkPolygons").checked) {
+        polygonLayer.show();
+      }
+      else {
+        polygonLayer.hide();
+      }
+    }
+
+    function getRandomIntInclusive(min, max) {
+      min = Math.ceil(min);
+      max = Math.floor(max);
+      return Math.floor(Math.random() * (max - min + 1)) + min; //The maximum is inclusive and the minimum is inclusive
+    }
+
+/*
+    function next() {
+      if (graphic) {
+        alert("Save Your Work or Start Over before continuing.");
+      }
+      else {
+        findReference();
+        toolbar.deactivate();
+      }
+    }
+    */
+
+    function next() {
+      findReference();
+      toolbar.deactivate();
+    }
+
+
+
+  	function reworkGraphic() {
+  	  document.getElementById("save").disabled = true;
+  	  map.graphics.clear();
+  	  graphic = "";
+  	  toolbar.deactivate();
+  	}
+
+    function findReference() {
+      document.getElementById("theOutput").innerHTML = "Searching for segment...";
+      query.where = "STATUS = 'Available' And OnLine is null";
+      //query.num = 2000;
+      query.num = 00050;
+      //query.resultOffset = 10000;
+      queryTask.execute(query, showResultsSelected);
+    }
+
+    function showResultsSelected (results) {
+      var resultItems = [];
+      var resultCount = results.features.length;
+      //alert(resultCount);
+      if (resultCount<1) {
+        alert("All records have been edited.  Project Complete.");
+        return;
+      }
+
+      var arrayID = getRandomIntInclusive(0,resultCount-1);
+      var featureAttributes = results.features[arrayID].attributes;
+      zoomToCoordinate(featureAttributes.LONGITUDE,featureAttributes.LATITUDE);
+      map.setZoom(featureAttributes.MAP_LEVEL);
+      theRecordID = featureAttributes.OBJECTID;
+      ownername = featureAttributes.OWNER_NAME;
+      currentMapLevel = featureAttributes.MAP_LEVEL;
+      document.getElementById("debugDiv").innerHTML = "Map ID = " + theRecordID;
+      document.getElementById("ownerDiv").innerHTML = "Owner = " + ownername;
+
+      if (resultCount>0) {
+        //Clear searching message
+        document.getElementById("theOutput").innerHTML = "";
+      }
+      else {
+        findReference();
+      }
+    }
+
+  	function zoomToCoordinate(theX,theY,theZ) {
+  	  var thePt = new esri.geometry.Point(theX,theY, new esri.SpatialReference({ wkid: 4269 }));
+  	  map.centerAndZoom(esri.geometry.geographicToWebMercator(thePt),map.getZoom());
+  	}
+
+    function showCoordinates(evt) {
+  	 // var mp = new esri.geometry.webMercatorToGeographic(evt.mapPoint);
+  	 // document.getElementById("latlonDiv").innerHTML = "Level: " + map.getZoom() + ", " + mp.x.toFixed(6) + ", " + mp.y.toFixed(6);
+  	 document.getElementById("theOutput").innerHTML = "";
+  	}
+
+    function jumpToGoogle() {
+      var ctr = map.extent.getCenter();
+      var lat = ctr.getLatitude();
+      var lon = ctr.getLongitude();
+      //var level = map.getLevel();
+       window.open("https://www.google.com/maps/@?api=1&map_action=pano&viewpoint="+lat+","+lon);
+    }
+
+  	function privateProperty() {
+    	var xmlhttp;
+    	if (window.XMLHttpRequest) {// code for IE7+, Firefox, Chrome, Opera, Safari
+    	  xmlhttp=new XMLHttpRequest();
+    	}
+    	else {// code for IE6, IE5
+    	  xmlhttp=new ActiveXObject("Microsoft.XMLHTTP");
+    	}
+    	xmlhttp.onreadystatechange=function() {
+    	  if (xmlhttp.readyState==4 && xmlhttp.status==200)	{
+          //alert("Record marked for investigation by the Mapping Branch.");
+    	  }
+    	}
+    //Service URL
+      var serviceURL = "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/ArcGIS/rest/services/Parcel_QC/FeatureServer/58/updateFeatures?f=json&features=";
+      serviceURL += "{'attributes': {'OBJECTID':" + theRecordID + ",'STATUS': 'Private Property'}}";
+      xmlhttp.open("POST",serviceURL,true);
+      xmlhttp.send();
+      next();
+      }
+
+      function undivided() {
+      	var xmlhttp;
+      	if (window.XMLHttpRequest) {// code for IE7+, Firefox, Chrome, Opera, Safari
+      	  xmlhttp=new XMLHttpRequest();
+      	}
+      	else {// code for IE6, IE5
+      	  xmlhttp=new ActiveXObject("Microsoft.XMLHTTP");
+      	}
+      	xmlhttp.onreadystatechange=function() {
+      	  if (xmlhttp.readyState==4 && xmlhttp.status==200)	{
+            //alert("Record marked for investigation by the Mapping Branch.");
+      	  }
+      	}
+      //Service URL
+        var serviceURL = "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/ArcGIS/rest/services/Parcel_QC/FeatureServer/58/updateFeatures?f=json&features=";
+        serviceURL += "{'attributes': {'OBJECTID':" + theRecordID + ",'STATUS': 'Undivided'}}";
+        xmlhttp.open("POST",serviceURL,true);
+        xmlhttp.send();
+        next();
+        }
+
+
+
+
+    function stateROW() {
+    	var xmlhttp;
+    	if (window.XMLHttpRequest) {// code for IE7+, Firefox, Chrome, Opera, Safari
+    	  xmlhttp=new XMLHttpRequest();
+    	}
+    	else {// code for IE6, IE5
+    	  xmlhttp=new ActiveXObject("Microsoft.XMLHTTP");
+    	}
+    	xmlhttp.onreadystatechange=function() {
+    	  if (xmlhttp.readyState==4 && xmlhttp.status==200)	{
+          //alert("Record marked for investigation by the Mapping Branch.");
+    	  }
+    	}
+      //Service URL
+        var serviceURL = "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/ArcGIS/rest/services/Parcel_QC/FeatureServer/58/updateFeatures?f=json&features=";
+        serviceURL += "{'attributes': {'OBJECTID':" + theRecordID + ",'STATUS': 'State ROW'}}";
+        xmlhttp.open("POST",serviceURL,true);
+        xmlhttp.send();
+        next();
+        }
+
+    function railROW() {
+    	var xmlhttp;
+    	if (window.XMLHttpRequest) {// code for IE7+, Firefox, Chrome, Opera, Safari
+    	  xmlhttp=new XMLHttpRequest();
+    	}
+    	else {// code for IE6, IE5
+    	  xmlhttp=new ActiveXObject("Microsoft.XMLHTTP");
+    	}
+    	xmlhttp.onreadystatechange=function() {
+    	  if (xmlhttp.readyState==4 && xmlhttp.status==200)	{
+          //alert("Record marked for investigation by the Mapping Branch.");
+    	  }
+    	}
+      //Service URL
+        var serviceURL = "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/ArcGIS/rest/services/Parcel_QC/FeatureServer/58/updateFeatures?f=json&features=";
+        serviceURL += "{'attributes': {'OBJECTID':" + theRecordID + ",'STATUS': 'Rail ROW'}}";
+        xmlhttp.open("POST",serviceURL,true);
+        xmlhttp.send();
+        next();
+        }
+
+    function utilityROW() {
+    	var xmlhttp;
+    	if (window.XMLHttpRequest) {// code for IE7+, Firefox, Chrome, Opera, Safari
+    	  xmlhttp=new XMLHttpRequest();
+    	}
+    	else {// code for IE6, IE5
+    	  xmlhttp=new ActiveXObject("Microsoft.XMLHTTP");
+    	}
+    	xmlhttp.onreadystatechange=function() {
+    	  if (xmlhttp.readyState==4 && xmlhttp.status==200)	{
+          //alert("Record marked for investigation by the Mapping Branch.");
+    	  }
+    	}
+      //Service URL
+        var serviceURL = "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/ArcGIS/rest/services/Parcel_QC/FeatureServer/58/updateFeatures?f=json&features=";
+        serviceURL += "{'attributes': {'OBJECTID':" + theRecordID + ",'STATUS': 'Utility ROW'}}";
+        xmlhttp.open("POST",serviceURL,true);
+        xmlhttp.send();
+        next();
+        }
+
+
+
+
+
+    function zoomoutPG() {
+    	var xmlhttp;
+    	if (window.XMLHttpRequest) {// code for IE7+, Firefox, Chrome, Opera, Safari
+    	  xmlhttp=new XMLHttpRequest();
+    	}
+    	else {// code for IE6, IE5
+    	  xmlhttp=new ActiveXObject("Microsoft.XMLHTTP");
+    	}
+    	xmlhttp.onreadystatechange=function() {
+    	  if (xmlhttp.readyState==4 && xmlhttp.status==200)	{
+          //alert("Record marked for investigation by the Mapping Branch.");
+    	  }
+    	}
+      //Service URL
+        var serviceURL = "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/ArcGIS/rest/services/Parcel_QC/FeatureServer/58/updateFeatures?f=json&features=";
+        var newMapLevel = currentMapLevel - 1;
+        serviceURL += "{'attributes': {'OBJECTID':" + theRecordID + ",'MAP_LEVEL':" + newMapLevel + "}}";
+        xmlhttp.open("POST",serviceURL,true);
+        xmlhttp.send();
+      }
+
+
+      function ZO_Skip() {
+      	    zoomoutPG();
+            next();
+      	}
+
+
+      function zoominPG() {
+      	var xmlhttp;
+      	if (window.XMLHttpRequest) {// code for IE7+, Firefox, Chrome, Opera, Safari
+      	  xmlhttp=new XMLHttpRequest();
+      	}
+      	else {// code for IE6, IE5
+      	  xmlhttp=new ActiveXObject("Microsoft.XMLHTTP");
+      	}
+      	xmlhttp.onreadystatechange=function() {
+      	  if (xmlhttp.readyState==4 && xmlhttp.status==200)	{
+            //alert("Record marked for investigation by the Mapping Branch.");
+      	  }
+      	}
+        //Service URL
+          var serviceURL = "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/ArcGIS/rest/services/Parcel_QC/FeatureServer/58/updateFeatures?f=json&features=";
+          var newMapLevel = currentMapLevel + 1;
+          serviceURL += "{'attributes': {'OBJECTID':" + theRecordID + ",'MAP_LEVEL':" + newMapLevel + "}}";
+          xmlhttp.open("POST",serviceURL,true);
+          xmlhttp.send();
+        }
+
+
+        function ZI_Skip() {
+        	    zoominPG();
+              next();
+        	}
+
+
+
+
+    </script>
+  </head>
+  <body class="nihilo">
+  <div id="mainWindow" data-dojo-type="dijit/layout/BorderContainer" data-dojo-props="design:'headline'">
+    <div id="header" data-dojo-type="dijit/layout/ContentPane" data-dojo-props="region:'left'">
+      <p>
+        ROW instructions:<br>
+        <ul>
+          <li>Click the Start Drawing button</li>
+          <li>Use the cursor to outline ROW on the map</li>
+          <li>Double click to finish the ROW drawing</li>
+          <li>Click Save Your Work when complete</li>
+          <li>Click Start Over to erase and redraw</li>
+          <li>Click Skip if you can't identify ROW</li>
+        </ul>
+      </p>
+        <button data-dojo-type="dijit/form/Button">Start Drawing</button>
+      <p>
+        <button id="save" onclick="saveGraphic()" title="Click this button to save your work.">Save Your Work</button>&nbsp;
+        <button id="redo" onclick="reworkGraphic()" title="Click this button to clear the graphic and start over.">Start Over</button>&nbsp;
+      </p>
+      <br>
+      <p>
+        <button id="btnPrivate" onclick="privateProperty()" title=".">Private Property - NOT ROW</button>
+        <button id="btnUndivided" onclick="undivided()" title=".">Undivided</button>
+        <button id="btnState" onclick="stateROW()" title=".">State ROW</button>
+      </p>
+      <p>
+        <button id="btnRail" onclick="railROW()" title=".">Rail ROW</button>
+        <button id="btnUtility" onclick="utilityROW()" title=".">Utility ROW</button>
+      </p>
+      <br>
+      <p>
+        <button id="next" onclick="next()" title="Click this button to skip to the next available record.">Load Next</button>
+
+      </p>
+      &nbsp;
+      <p>
+        <button id="ZoomOutAndSkip" onclick="ZO_Skip()" title="Click this button to change zoom level on next load.">Zoom Out and Skip</button>
+        <button id="ZoomInAndSkip" onclick="ZI_Skip()" title="Click this button to change zoom level on next load.">Zoom In and Skip</button>
+      </p>
+      &nbsp;
+      <p>
+        <a href="https://txdot.sharepoint.com/sites/division-tpp/crowd/Shared%20Documents/ROW_CROWD%20v2.pdf" target="_blank">Help Document</a>
+      </p>
+      <div id="theOutput"></div>
+      <div id="debugDiv"></div>
+      <div id="ownerDiv"></div>
+
+    </div>
+    <div id="map" data-dojo-type="dijit/layout/ContentPane" data-dojo-props="region:'center'">
+      <button id="btnGoogle" onclick="jumpToGoogle()">Jump to Google</button>
+    </div>
+  </div>
+  </body>
+</html>
